@@ -1,0 +1,78 @@
+name: build-ffmpeg
+# A small, static, remux-oriented ffmpeg/ffprobe. Generic: nothing here knows
+# about any particular project. Published as release assets so any workflow can
+# fetch two files instead of installing a distribution package.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: FFmpeg git tag to build
+        default: n8.1.3
+      tag:
+        description: release tag to publish
+        default: ffmpeg-n8.1.3-r1
+      publish:
+        description: publish a release (true/false)
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: build in alpine (musl, fully static)
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          mkdir -p out
+          cat > build.sh <<'EOF'
+          set -eu
+          apk add --no-cache build-base git pkgconf openssl-dev openssl-libs-static perl
+          git clone --depth 1 --branch "$REF" https://github.com/FFmpeg/FFmpeg.git src
+          cd src
+          AUDIO_DEC="aac,aac_latm,ac3,eac3,dca,truehd,mlp,flac,mp3,mp3float,opus,vorbis,alac,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_f32le,pcm_u8"
+          ./configure \
+            --prefix=/out \
+            --pkg-config-flags=--static \
+            --extra-ldflags=-static \
+            --disable-everything --disable-autodetect --disable-doc --disable-debug \
+            --disable-ffplay --enable-ffmpeg --enable-ffprobe \
+            --disable-x86asm --enable-small --enable-version3 \
+            --enable-openssl \
+            --enable-protocol=file,pipe,http,https,tcp,tls,crypto,hls \
+            --enable-demuxers --enable-muxers --enable-parsers --enable-bsfs \
+            --enable-decoder="$AUDIO_DEC" \
+            --enable-encoder=aac \
+            --enable-filter=aresample,aformat,anull,abuffer,abuffersink,atrim,asetpts,format,null,buffer,buffersink \
+            || { tail -40 ffbuild/config.log; exit 1; }
+          make -j"$(nproc)"
+          strip ffmpeg ffprobe
+          cp ffmpeg ffprobe /w/out/
+          ls -la /w/out
+          EOF
+          docker run --rm -e REF="$REF" -v "$PWD:/w" -w /w alpine:3.21 sh /w/build.sh
+
+      - name: sanity
+        run: |
+          cd out
+          file ffmpeg ffprobe | cut -c1-120
+          ./ffmpeg -hide_banner -version | head -3
+          ./ffmpeg -hide_banner -encoders | grep -E " aac " || true
+          ./ffmpeg -hide_banner -protocols 2>&1 | tr '\n' ' '; echo
+          ./ffprobe -v error -show_entries format=format_name -of csv=p=0 https://github.com/ 2>&1 | head -2 || true
+          sha256sum ffmpeg ffprobe | tee SHA256SUMS
+          ls -la
+
+      - name: publish
+        if: ${{ inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          REF: ${{ inputs.ref }}
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" out/ffmpeg out/ffprobe out/SHA256SUMS \
+            --title "$TAG" --notes "Static remux-oriented ffmpeg/ffprobe built from FFmpeg $REF (LGPL v3, OpenSSL for https). Audio decoders: aac ac3 eac3 dca truehd flac mp3 opus vorbis alac pcm. Encoder: aac. No video decoders or encoders: stream copy only."
