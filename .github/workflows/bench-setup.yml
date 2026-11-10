@@ -1,0 +1,38 @@
+name: bench-setup
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: image facts
+        run: |
+          head -2 /etc/os-release
+          echo "cpus=$(nproc)"
+          free -m | sed -n 2p
+          df -h / | tail -1
+          which ffmpeg ffprobe || echo "no ffmpeg preinstalled"
+
+      - name: apt update
+        run: sudo apt-get update 2>&1 | tail -2
+
+      - name: apt download only
+        run: sudo apt-get install -y --download-only --no-install-recommends ffmpeg 2>&1 | grep -E "Need to get|Fetched|newly installed"
+
+      - name: apt install from the downloaded cache
+        run: sudo apt-get install -y --no-install-recommends ffmpeg 2>&1 | tail -2
+
+      - name: static build download (BtbN, lgpl, 8.1)
+        run: |
+          curl -sL -o /tmp/ff.tar.xz -w 'size=%{size_download} time=%{time_total}s speed=%{speed_download}B/s\n' \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-lgpl-8.1.tar.xz
+
+      - name: static build extract
+        run: |
+          mkdir -p /tmp/ff && tar -xf /tmp/ff.tar.xz -C /tmp/ff --strip-components=1
+          ls -la /tmp/ff/bin
+          /tmp/ff/bin/ffmpeg -hide_banner -version | head -1
