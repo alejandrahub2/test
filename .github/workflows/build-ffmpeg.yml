@@ -73,6 +73,6 @@ jobs:
           TAG: ${{ inputs.tag }}
           REF: ${{ inputs.ref }}
         run: |
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" out/ffmpeg out/ffprobe out/SHA256SUMS \
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" out/ffmpeg out/ffprobe out/SHA256SUMS \
             --title "$TAG" --notes "Static remux-oriented ffmpeg/ffprobe built from FFmpeg $REF (LGPL v3, OpenSSL for https). Audio decoders: aac ac3 eac3 dca truehd flac mp3 opus vorbis alac pcm. Encoder: aac. No video decoders or encoders: stream copy only."
